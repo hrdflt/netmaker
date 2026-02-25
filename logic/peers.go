@@ -341,18 +341,20 @@ func GetPeerUpdateForHost(network string, host *models.Host, allNodes []models.N
 					}
 				}
 
-				hostPeerUpdate.EgressRoutes = append(hostPeerUpdate.EgressRoutes, models.EgressNetworkRoutes{
-					PeerKey:                peerKey,
-					EgressGwAddr:           peer.Address,
-					EgressGwAddr6:          peer.Address6,
-					NodeAddr:               node.Address,
-					NodeAddr6:              node.Address6,
-					EgressRanges:           filterConflictingEgressRoutes(node, peer),
-					EgressRangesWithMetric: filterConflictingEgressRoutesWithMetric(node, peer),
-					Network:                peer.Network,
-				})
+				if !servercfg.IsEgressRouteManagementDisabled() {
+					hostPeerUpdate.EgressRoutes = append(hostPeerUpdate.EgressRoutes, models.EgressNetworkRoutes{
+						PeerKey:                peerKey,
+						EgressGwAddr:           peer.Address,
+						EgressGwAddr6:          peer.Address6,
+						NodeAddr:               node.Address,
+						NodeAddr6:              node.Address6,
+						EgressRanges:           filterConflictingEgressRoutes(node, peer),
+						EgressRangesWithMetric: filterConflictingEgressRoutesWithMetric(node, peer),
+						Network:                peer.Network,
+					})
+				}
 			}
-			if peer.IsIngressGateway {
+			if peer.IsIngressGateway && !servercfg.IsEgressRouteManagementDisabled() {
 				hostPeerUpdate.EgressRoutes = append(hostPeerUpdate.EgressRoutes, getExtpeersExtraRoutes(node)...)
 			}
 			var allowedToComm bool
@@ -521,7 +523,9 @@ func GetPeerUpdateForHost(network string, host *models.Host, allNodes []models.N
 					ingFwUpdate.EgressRanges, ingFwUpdate.EgressRanges6 = getExtpeerEgressRanges(node)
 					hostPeerUpdate.FwUpdate.IngressInfo[node.ID.String()] = ingFwUpdate
 				}
-				hostPeerUpdate.EgressRoutes = append(hostPeerUpdate.EgressRoutes, egressRoutes...)
+				if !servercfg.IsEgressRouteManagementDisabled() {
+					hostPeerUpdate.EgressRoutes = append(hostPeerUpdate.EgressRoutes, egressRoutes...)
+				}
 				hostPeerUpdate.Peers = append(hostPeerUpdate.Peers, extPeers...)
 				for _, extPeerIdAndAddr := range extPeerIDAndAddrs {
 					extPeerIdAndAddr := extPeerIdAndAddr
@@ -534,86 +538,90 @@ func GetPeerUpdateForHost(network string, host *models.Host, allNodes []models.N
 				logger.Log(1, "error retrieving external clients:", err.Error())
 			}
 		}
-		if node.EgressDetails.IsEgressGateway && len(node.EgressDetails.EgressGatewayRequest.Ranges) > 0 {
-			hostPeerUpdate.FwUpdate.IsEgressGw = true
-			hostPeerUpdate.FwUpdate.EgressInfo[node.ID.String()] = models.EgressInfo{
-				EgressID: node.ID.String(),
-				Network:  node.PrimaryNetworkRange(),
-				EgressGwAddr: net.IPNet{
-					IP:   net.ParseIP(node.PrimaryAddress()),
-					Mask: getCIDRMaskFromAddr(node.PrimaryAddress()),
-				},
-				Network6: node.NetworkRange6,
-				EgressGwAddr6: net.IPNet{
-					IP:   node.Address6.IP,
-					Mask: getCIDRMaskFromAddr(node.Address6.IP.String()),
-				},
-				EgressGWCfg:   node.EgressDetails.EgressGatewayRequest,
-				EgressFwRules: make(map[string]models.AclRule),
-			}
-			if host.EnableFlowLogs {
-				for _, egressRange := range node.EgressDetails.EgressGatewayRequest.RangesWithMetric {
-					if egressRange.EgressID != "" {
-						hostPeerUpdate.AddressIdentityMap[egressRange.Network] = models.PeerIdentity{
-							ID:   egressRange.EgressID,
-							Type: models.PeerType_EgressRoute,
-							Name: egressRange.EgressName,
+		if !servercfg.IsEgressRouteManagementDisabled() {
+			if node.EgressDetails.IsEgressGateway && len(node.EgressDetails.EgressGatewayRequest.Ranges) > 0 {
+				hostPeerUpdate.FwUpdate.IsEgressGw = true
+				hostPeerUpdate.FwUpdate.EgressInfo[node.ID.String()] = models.EgressInfo{
+					EgressID: node.ID.String(),
+					Network:  node.PrimaryNetworkRange(),
+					EgressGwAddr: net.IPNet{
+						IP:   net.ParseIP(node.PrimaryAddress()),
+						Mask: getCIDRMaskFromAddr(node.PrimaryAddress()),
+					},
+					Network6: node.NetworkRange6,
+					EgressGwAddr6: net.IPNet{
+						IP:   node.Address6.IP,
+						Mask: getCIDRMaskFromAddr(node.Address6.IP.String()),
+					},
+					EgressGWCfg:   node.EgressDetails.EgressGatewayRequest,
+					EgressFwRules: make(map[string]models.AclRule),
+				}
+				if host.EnableFlowLogs {
+					for _, egressRange := range node.EgressDetails.EgressGatewayRequest.RangesWithMetric {
+						if egressRange.EgressID != "" {
+							hostPeerUpdate.AddressIdentityMap[egressRange.Network] = models.PeerIdentity{
+								ID:   egressRange.EgressID,
+								Type: models.PeerType_EgressRoute,
+								Name: egressRange.EgressName,
+							}
 						}
 					}
 				}
 			}
-		}
-		if node.EgressDetails.IsEgressGateway {
-			if !networkAllowAll {
-				egressInfo := hostPeerUpdate.FwUpdate.EgressInfo[node.ID.String()]
-				if egressInfo.EgressFwRules == nil {
-					egressInfo.EgressFwRules = make(map[string]models.AclRule)
+			if node.EgressDetails.IsEgressGateway {
+				if !networkAllowAll {
+					egressInfo := hostPeerUpdate.FwUpdate.EgressInfo[node.ID.String()]
+					if egressInfo.EgressFwRules == nil {
+						egressInfo.EgressFwRules = make(map[string]models.AclRule)
+					}
+					egressInfo.EgressFwRules = GetEgressRulesForNode(node)
+					hostPeerUpdate.FwUpdate.EgressInfo[node.ID.String()] = egressInfo
 				}
-				egressInfo.EgressFwRules = GetEgressRulesForNode(node)
-				hostPeerUpdate.FwUpdate.EgressInfo[node.ID.String()] = egressInfo
-			}
 
+			}
 		}
 
-		if IsInternetGw(node) {
-			hostPeerUpdate.FwUpdate.IsEgressGw = true
-			egressrange := []string{"0.0.0.0/0"}
-			if node.Address6.IP != nil {
-				egressrange = append(egressrange, "::/0")
+		if !servercfg.IsEgressRouteManagementDisabled() {
+			if IsInternetGw(node) {
+				hostPeerUpdate.FwUpdate.IsEgressGw = true
+				egressrange := []string{"0.0.0.0/0"}
+				if node.Address6.IP != nil {
+					egressrange = append(egressrange, "::/0")
+				}
+				rangeWithMetric := []models.EgressRangeMetric{}
+				for _, rangeI := range egressrange {
+					rangeWithMetric = append(rangeWithMetric, models.EgressRangeMetric{
+						Network:     rangeI,
+						RouteMetric: 256,
+						Nat:         true,
+						Mode:        models.DirectNAT,
+					})
+				}
+				inetEgressInfo := models.EgressInfo{
+					EgressID: fmt.Sprintf("%s-%s", node.ID.String(), "inet"),
+					Network:  node.PrimaryAddressIPNet(),
+					EgressGwAddr: net.IPNet{
+						IP:   net.ParseIP(node.PrimaryAddress()),
+						Mask: getCIDRMaskFromAddr(node.PrimaryAddress()),
+					},
+					Network6: node.NetworkRange6,
+					EgressGwAddr6: net.IPNet{
+						IP:   node.Address6.IP,
+						Mask: getCIDRMaskFromAddr(node.Address6.IP.String()),
+					},
+					EgressGWCfg: models.EgressGatewayRequest{
+						NodeID:           fmt.Sprintf("%s-%s", node.ID.String(), "inet"),
+						NetID:            node.Network,
+						NatEnabled:       "yes",
+						Ranges:           egressrange,
+						RangesWithMetric: rangeWithMetric,
+					},
+				}
+				if !networkAllowAll {
+					inetEgressInfo.EgressFwRules = GetAclRuleForInetGw(node)
+				}
+				hostPeerUpdate.FwUpdate.EgressInfo[fmt.Sprintf("%s-%s", node.ID.String(), "inet")] = inetEgressInfo
 			}
-			rangeWithMetric := []models.EgressRangeMetric{}
-			for _, rangeI := range egressrange {
-				rangeWithMetric = append(rangeWithMetric, models.EgressRangeMetric{
-					Network:     rangeI,
-					RouteMetric: 256,
-					Nat:         true,
-					Mode:        models.DirectNAT,
-				})
-			}
-			inetEgressInfo := models.EgressInfo{
-				EgressID: fmt.Sprintf("%s-%s", node.ID.String(), "inet"),
-				Network:  node.PrimaryAddressIPNet(),
-				EgressGwAddr: net.IPNet{
-					IP:   net.ParseIP(node.PrimaryAddress()),
-					Mask: getCIDRMaskFromAddr(node.PrimaryAddress()),
-				},
-				Network6: node.NetworkRange6,
-				EgressGwAddr6: net.IPNet{
-					IP:   node.Address6.IP,
-					Mask: getCIDRMaskFromAddr(node.Address6.IP.String()),
-				},
-				EgressGWCfg: models.EgressGatewayRequest{
-					NodeID:           fmt.Sprintf("%s-%s", node.ID.String(), "inet"),
-					NetID:            node.Network,
-					NatEnabled:       "yes",
-					Ranges:           egressrange,
-					RangesWithMetric: rangeWithMetric,
-				},
-			}
-			if !networkAllowAll {
-				inetEgressInfo.EgressFwRules = GetAclRuleForInetGw(node)
-			}
-			hostPeerUpdate.FwUpdate.EgressInfo[fmt.Sprintf("%s-%s", node.ID.String(), "inet")] = inetEgressInfo
 		}
 	}
 	// == post peer calculations ==

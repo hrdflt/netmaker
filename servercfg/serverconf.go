@@ -740,6 +740,18 @@ func IsEndpointDetectionEnabled() bool {
 	return enabled
 }
 
+// IsEgressRouteManagementDisabled checks if egress route management is disabled.
+// When true, the server will not send routing table manipulation instructions
+// (EgressRoutes, ChangeDefaultGw, FwUpdate egress info) to clients,
+// while preserving WireGuard tunnel setup and AllowedIPs.
+// This is useful when running external dynamic routing protocols.
+func IsEgressRouteManagementDisabled() bool {
+	if os.Getenv("DISABLE_EGRESS_ROUTE_MANAGEMENT") == "true" {
+		return true
+	}
+	return false
+}
+
 // IsStunEnabled - returns true if STUN set to on
 func IsStunEnabled() bool {
 	var enabled = true

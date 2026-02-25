@@ -430,6 +430,9 @@ func UnsetInternetGw(node *models.Node) {
 }
 
 func SetDefaultGwForRelayedUpdate(relayed, relay models.Node, peerUpdate models.HostPeerUpdate) models.HostPeerUpdate {
+	if servercfg.IsEgressRouteManagementDisabled() {
+		return peerUpdate
+	}
 	if relay.InternetGwID != "" {
 		relayedHost, err := GetHost(relayed.HostID.String())
 		if err != nil {
@@ -446,6 +449,9 @@ func SetDefaultGwForRelayedUpdate(relayed, relay models.Node, peerUpdate models.
 }
 
 func SetDefaultGw(node models.Node, peerUpdate models.HostPeerUpdate) models.HostPeerUpdate {
+	if servercfg.IsEgressRouteManagementDisabled() {
+		return peerUpdate
+	}
 	if node.InternetGwID != "" {
 
 		inetNode, err := GetNodeByID(node.InternetGwID)
