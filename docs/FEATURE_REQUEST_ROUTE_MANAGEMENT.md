@@ -1,7 +1,7 @@
 # Feature Request: Toggles for egress route and firewall management
 
-**Server branch**: [`feature/disable-egress-route-management`](https://github.com/hrdflt/netmaker/tree/feature/disable-egress-route-management)
-**Netclient branch**: [`feature/disable-route-management`](https://github.com/hrdflt/netclient/tree/feature/disable-route-management)
+**Server branch**: [`feature/disable-egress-route-management`](https://github.com/gravitl/netmaker/compare/master...hrdflt:netmaker:feature/disable-egress-route-management)
+**Netclient branch**: [`feature/disable-route-management`](https://github.com/gravitl/netclient/compare/master...hrdflt:netclient:feature/disable-route-management)
 
 ## What I need
 
