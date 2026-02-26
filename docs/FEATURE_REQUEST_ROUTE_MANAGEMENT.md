@@ -1,4 +1,4 @@
-# Feature Request: Toggles for egress route and firewall management
+# [Feature] Toggles for egress route and firewall management
 
 **Server branch**: [`feature/disable-egress-route-management`](https://github.com/gravitl/netmaker/compare/master...hrdflt:netmaker:feature/disable-egress-route-management)
 **Netclient branch**: [`feature/disable-route-management`](https://github.com/gravitl/netclient/compare/master...hrdflt:netclient:feature/disable-route-management)
@@ -85,41 +85,9 @@ Results:
 
 All three flags default to off, so existing behavior is completely unchanged unless you opt in.
 
-## Where I think this should go long-term
+## Where this could go long-term
 
-My implementation is a global kill switch, which works for my use case but isn't very flexible. I think the right product design is a 3-tier model: server-wide default, per-network override, per-egress override. Here's how I'd wire each one up:
-
-### Server-wide setting
-
-Add a `ManageEgressRoutes bool` field to the `ServerSettings` struct in `models/settings.go` (defaults to `true`). The plumbing already exists — `logic/settings.go` has `GetServerSettingsFromEnv()` (~line 170) for reading env defaults, `ValidateNewSettings()` (~line 153) for validation (nothing needed for a bool), and `controllers/server.go` `reInit()` (~line 307) for triggering peer updates when settings change. Then replace my `servercfg.IsEgressRouteManagementDisabled()` calls with `!GetServerSettings().ManageEgressRoutes`.
-
-The dashboard already reads/writes server settings via `GET/PUT /api/server/settings`, so the frontend just needs a toggle.
-
-### Per-network override
-
-Add `ManageEgressRoutes string` to the `Network` struct in `models/network.go`, using the existing `"checkyesornoorunset"` validation pattern (same as `DefaultACL`, `JITEnabled`, etc.):
-
-```go
-ManageEgressRoutes string `json:"manage_egress_routes" validate:"checkyesornoorunset"`
-```
-
-Three states: `"yes"` (force enable), `"no"` (force disable), `""` (inherit from server). The network CRUD in `controllers/network.go` and `logic/networks.go` already handles this pattern. In `logic/peers.go`, `GetPeerUpdateForHost()` already has `node.Network` available to look up per-network settings. Resolution: per-network -> server-wide -> default true.
-
-### Per-egress override
-
-Add `ManageRoutes *bool` to both the GORM model in `schema/egress.go` and the API model `EgressReq` in `models/egress.go`:
-
-```go
-// schema/egress.go
-ManageRoutes *bool `gorm:"manage_routes;default:null" json:"manage_routes"`
-
-// models/egress.go
-ManageRoutes *bool `json:"manage_routes"` // nil = inherit, true/false = override
-```
-
-Pointer-to-bool gives three states: `nil` (inherit), `true`, `false`. The update path goes through `controllers/egress.go` `updateEgress()` (~line 343) — just add `"manage_routes"` to the GORM `updateMap`. The runtime check goes in `logic/egress.go` `AddEgressInfoToPeerByAccess()` (~line 122) and `GetNodeEgressInfo()` (~line 321).
-
-For this tier to work end-to-end, the netclient would also need a small change: when processing `EgressNetworkRoutes`, check for a `ManageRoutes` flag on each `EgressRangeMetric` (in `models/structs.go` ~line 191) and skip the `netlink.RouteAdd()`/`iptables` calls for that range. Resolution: per-egress -> per-network -> server-wide -> default true.
+The env var approach is a crude sysadmin-level toggle — it works, but it requires editing systemd unit files or container env. Ideally this would be abstracted into a dashboard toggle, controllable per-node or at a global/network level, so operators can flip it without touching the host. The underlying guard logic in both the server and netclient is already in place to support that.
 
 ## Testing steps
 
@@ -133,4 +101,4 @@ For this tier to work end-to-end, the netclient would also need a small change: 
 8. Start your routing daemon over the WireGuard tunnels
 9. Confirm dynamic routes are learned and Netmaker doesn't overwrite them
 
-Happy to iterate on this — let me know if the 3-tier approach makes sense or if you'd rather keep it simpler.
+Happy to iterate on this.
